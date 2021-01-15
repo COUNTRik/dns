@@ -8,6 +8,8 @@
       - bind
       - bind-utils
       - ntp
+      - mc
+      - vim
 
   - name: copy transferkey to all servers and the client
     copy: src=named.zonetransfer.key dest=/etc/named.zonetransfer.key owner=root group=named mode=0644
