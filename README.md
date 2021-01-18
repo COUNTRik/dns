@@ -7,6 +7,7 @@
 - днс сервера master *ns01 192.168.50.10*, slave *ns02 192.168.50.11*
 - клиенты *client 192.168.50.15*, *client2 192.168.50.16*
 
+Все три насройки для днс применены в playbook.yml
 
 ## Добавление серверов в зону днс
 
@@ -82,11 +83,19 @@
 	www            IN      A       192.168.50.15
 	www            IN      A       192.168.50.16
 
-И добавляем секцию для зоны *newdns*
+И добавляем секцию для зоны *newdns* в *ns01*
 
 	zone "newdns.lab" {
 	    type master;
 	    allow-transfer { key "zonetransfer.key"; };
+	    file "/etc/named/named.newdns.lab";
+	};
+
+и в *ns02*
+
+	zone "newdns.lab" {
+	    type slave;
+	    masters { 192.168.50.10; };
 	    file "/etc/named/named.newdns.lab";
 	};
 
@@ -113,3 +122,113 @@
 	Address: 192.168.50.16
 
 ## Split DNS
+
+В конфигурационном файле *named.conf* и в ns01 и в ns02 создаем списки *acl* для клиентов и добавляем те *zones* в параметр *veiw*в зависимости от того какие зоны мы хотим показать для каких клиентов. В параметре match clients указываем те acl которым мы хотим показать эту зону. 
+
+Примечание: - все зоны должны быть описаны внутри view, в противном случае получим ошибку; - при поиске нужной зоны если dns найдет подходящую запись он использует ее, поэтому лучше acl типа any лучше быть внизу;
+
+	acl "master" { 192.168.50.10/32; };
+	acl "slave" { 192.168.50.11/32; };
+	acl "client1" { 192.168.50.15/32; };
+	acl "client2" { 192.168.50.16/32; };
+
+	view "client1" {
+	    match-clients { client1; "master"; "slave"; };
+
+	    // root zone
+	    zone "." IN {
+	        type hint;
+	        file "named.ca";
+	    };
+
+	    // zones like localhost
+	    include "/etc/named.rfc1912.zones";
+	    // root's DNSKEY
+	    include "/etc/named.root.key";
+
+	    // lab's zone
+	    zone "dns.lab" {
+	        type master;
+	        allow-transfer { key "zonetransfer.key"; };
+	        file "/etc/named/named.dns.lab";
+	    };
+	    
+	    zone "newdns.lab" {
+	        type master;
+	        allow-transfer { key "zonetransfer.key"; };
+	        file "/etc/named/named.newdns.lab";
+	    };
+
+	    // lab's zone reverse
+	    zone "50.168.192.in-addr.arpa" {
+	        type master;
+	        allow-transfer { key "zonetransfer.key"; };
+	        file "/etc/named/named.dns.lab.rev";
+	    };
+
+	    // lab's ddns zone
+	    zone "ddns.lab" {
+	        type master;
+	        allow-transfer { key "zonetransfer.key"; };
+	        allow-update { key "zonetransfer.key"; };
+	        file "/etc/named/named.ddns.lab";
+	    };
+	};
+
+	view "client2" {
+    	match-clients { client2; "master"; "slave"; };
+
+	    // root zone
+	    zone "." IN {
+	        type hint;
+	        file "named.ca";
+	    };
+
+	    // zones like localhost
+	    include "/etc/named.rfc1912.zones";
+	    // root's DNSKEY
+	    include "/etc/named.root.key";
+
+	    // lab's zone
+	    zone "dns.lab" {
+	        type master;
+	        allow-transfer { key "zonetransfer.key"; };
+	        file "/etc/named/named.dns.lab";
+	    };
+	};
+
+Проверяем:
+
+*client*
+
+	[root@client vagrant]# nslookup web2.dns.lab 192.168.50.10
+	Server:		192.168.50.10
+	Address:	192.168.50.10#53
+
+	Name:	web2.dns.lab
+	Address: 192.168.50.16
+
+	[root@client vagrant]# nslookup www.newdns.lab 192.168.50.10
+	Server:		192.168.50.10
+	Address:	192.168.50.10#53
+
+	Name:	www.newdns.lab
+	Address: 192.168.50.15
+	Name:	www.newdns.lab
+	Address: 192.168.50.16
+
+
+*client2*
+
+	[root@client2 vagrant]# nslookup web1.dns.lab 192.168.50.10
+	Server:		192.168.50.10
+	Address:	192.168.50.10#53
+
+	Name:	web1.dns.lab
+	Address: 192.168.50.15
+
+	[root@client2 vagrant]# nslookup www.newdns.lab 192.168.50.10
+	Server:		192.168.50.10
+	Address:	192.168.50.10#53
+
+	** server can't find www.newdns.lab: NXDOMAIN
